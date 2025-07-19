@@ -1,0 +1,293 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+<head>
+    <link rel="manifest" href="manifest.json">
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no" />
+<title>共有可能なメモ付きマップ（色付きピン対応）</title>
+<link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" />
+<style>
+  body, html { margin:0; padding:0; height:100%; }
+  #map { height: 100vh; }
+  .popup-content img { max-width: 100%; margin-top: 8px; }
+  textarea, input[type=text], select {
+    width: 100%; margin: 5px 0; box-sizing: border-box;
+    font-size: 16px; padding: 8px;
+  }
+  button {
+    margin: 3px; font-size: 16px; padding: 10px 15px;
+  }
+  #share-container {
+    position: absolute; top: 10px; right: 10px; z-index: 1000;
+    background: white; padding: 8px; border-radius: 6px; box-shadow: 0 0 5px rgba(0,0,0,0.3);
+    font-family: sans-serif;
+  }
+  #share-code-input {
+    width: 130px;
+    margin-top: 5px;
+    padding: 8px;
+    font-size: 16px;
+  }
+</style>
+</head>
+<body>
+
+<div id="map"></div>
+
+<div id="share-container">
+  <button id="share-btn">共有</button><br/>
+  <div id="share-code-display" style="margin-top:5px;"></div>
+  <input type="text" id="share-code-input" placeholder="共有コード入力" />
+  <button id="load-share-btn">読み込み</button>
+  <div id="share-message" style="color:red; margin-top:5px;"></div>
+</div>
+
+<script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+<script>
+  const map = L.map('map').setView([35.681236,139.767125], 13);
+  L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png',{
+    attribution: '&copy; OpenStreetMap contributors'
+  }).addTo(map);
+
+  let savedPins = JSON.parse(localStorage.getItem('pins') || '[]');
+  const markers = [];
+  let popupOpen = false;
+
+  // ピン色別アイコン定義
+  const iconUrls = {
+    red: 'https://raw.githubusercontent.com/pointhi/leaflet-color-markers/master/img/marker-icon-red.png',
+    blue: 'https://raw.githubusercontent.com/pointhi/leaflet-color-markers/master/img/marker-icon-blue.png',
+    green: 'https://raw.githubusercontent.com/pointhi/leaflet-color-markers/master/img/marker-icon-green.png',
+    yellow: 'https://raw.githubusercontent.com/pointhi/leaflet-color-markers/master/img/marker-icon-yellow.png',
+    purple: 'https://raw.githubusercontent.com/pointhi/leaflet-color-markers/master/img/marker-icon-violet.png'
+  };
+
+  function createIcon(color = 'blue') {
+    return new L.Icon({
+      iconUrl: iconUrls[color] || iconUrls.blue,
+      shadowUrl: 'https://unpkg.com/leaflet@1.9.4/dist/images/marker-shadow.png',
+      iconSize: [25, 41],
+      iconAnchor: [12, 41],
+      popupAnchor: [1, -34],
+      shadowSize: [41, 41]
+    });
+  }
+
+  // 共有コード周りは省略（先ほどのコードを流用）
+  const shareBtn = document.getElementById('share-btn');
+  const shareCodeDisplay = document.getElementById('share-code-display');
+  const shareCodeInput = document.getElementById('share-code-input');
+  const loadShareBtn = document.getElementById('load-share-btn');
+  const shareMessage = document.getElementById('share-message');
+
+  function generateShareCode() {
+    const jsonStr = JSON.stringify(savedPins);
+    const base64 = btoa(unescape(encodeURIComponent(jsonStr)));
+    let sum = 0;
+    for(let i=0; i<base64.length; i++) {
+      sum += base64.charCodeAt(i);
+    }
+    let code = (sum % 10000000).toString().padStart(7,'0');
+    return code;
+  }
+
+  function loadSharedMapByCode(code) {
+    if (code === generateShareCode()) {
+      loadPins(savedPins);
+      shareMessage.style.color = 'green';
+      shareMessage.textContent = '共有マップを読み込みました。';
+    } else {
+      shareMessage.style.color = 'red';
+      shareMessage.textContent = '共有コードが正しくありません。';
+    }
+  }
+
+  shareBtn.onclick = () => {
+    const code = generateShareCode();
+    shareCodeDisplay.textContent = `共有コード: ${code}`;
+    shareMessage.textContent = '';
+  };
+
+  loadShareBtn.onclick = () => {
+    const code = shareCodeInput.value.trim();
+    if(code.length !==7 || !/^\d{7}$/.test(code)) {
+      shareMessage.style.color = 'red';
+      shareMessage.textContent = '7桁の数字コードを入力してください。';
+      return;
+    }
+    loadSharedMapByCode(code);
+  };
+
+  function loadPins(pins) {
+    markers.forEach(m => map.removeLayer(m));
+    markers.length = 0;
+    savedPins = pins;
+    savedPins.forEach(item => {
+      const marker = L.marker(item.latlng, {icon: createIcon(item.data.color || 'blue')}).addTo(map);
+      setupMarker(marker, item.latlng, item.data);
+    });
+  }
+
+  function createPopupForm(marker, latlng, existingData=null) {
+    const container = document.createElement('div');
+    container.classList.add('popup-content');
+
+    if(existingData) {
+      // 表示モード
+      const info = document.createElement('div');
+      info.innerHTML = `
+        <p><strong>メモ:</strong> ${existingData.text || ''}</p>
+        ${existingData.url ? `<p><strong>URL:</strong> <a href="${existingData.url}" target="_blank">${existingData.url}</a></p>` : ''}
+        ${existingData.image ? `<img src="${existingData.image}" alt="画像" />` : ''}
+        <p><strong>色:</strong> ${existingData.color || '青'}</p>
+      `;
+      container.appendChild(info);
+
+      const closeBtn = document.createElement('button');
+      closeBtn.textContent = '閉じる';
+      closeBtn.onclick = () => map.closePopup();
+
+      const deleteBtn = document.createElement('button');
+      deleteBtn.textContent = '削除';
+      deleteBtn.onclick = () => {
+        map.removeLayer(marker);
+        const idx = markers.findIndex(m => m === marker);
+        if(idx !== -1) {
+          savedPins.splice(idx,1);
+          localStorage.setItem('pins', JSON.stringify(savedPins));
+          markers.splice(idx,1);
+        }
+      };
+
+      const editBtn = document.createElement('button');
+      editBtn.textContent = '編集';
+      editBtn.onclick = () => {
+        marker.bindPopup(createPopupForm(marker, latlng)).openPopup();
+      };
+
+      container.appendChild(closeBtn);
+      container.appendChild(deleteBtn);
+      container.appendChild(editBtn);
+
+    } else {
+      // 入力フォームモード
+      const textarea = document.createElement('textarea');
+      textarea.placeholder = 'メモを入力';
+
+      const urlInput = document.createElement('input');
+      urlInput.type = 'text';
+      urlInput.placeholder = 'URL (任意)';
+
+      const imageInput = document.createElement('input');
+      imageInput.type = 'file';
+      imageInput.accept = 'image/*';
+
+      // 追加：色選択セレクト
+      const colorSelect = document.createElement('select');
+      const colors = [
+        {value:'red', label:'赤'},
+        {value:'blue', label:'青'},
+        {value:'green', label:'緑'},
+        {value:'yellow', label:'黄'},
+        {value:'purple', label:'紫'}
+      ];
+      colors.forEach(c => {
+        const opt = document.createElement('option');
+        opt.value = c.value;
+        opt.textContent = c.label;
+        colorSelect.appendChild(opt);
+      });
+
+      // デフォルト色設定（青）
+      colorSelect.value = existingData?.color || 'blue';
+
+      let imageData = '';
+
+      imageInput.addEventListener('change', () => {
+        const file = imageInput.files[0];
+        if(file) {
+          const reader = new FileReader();
+          reader.onload = () => {
+            imageData = reader.result;
+          };
+          reader.readAsDataURL(file);
+        }
+      });
+
+      const saveBtn = document.createElement('button');
+      saveBtn.textContent = '保存';
+
+      const cancelBtn = document.createElement('button');
+      cancelBtn.textContent = 'キャンセル';
+
+      saveBtn.onclick = () => {
+        const data = {
+          text: textarea.value,
+          url: urlInput.value,
+          image: imageData,
+          color: colorSelect.value // 色も保存
+        };
+        const idx = savedPins.findIndex(pin => pin.latlng.lat === latlng.lat && pin.latlng.lng === latlng.lng);
+        if(idx !== -1) {
+          savedPins[idx].data = data;
+        } else {
+          savedPins.push({ latlng, data });
+        }
+        localStorage.setItem('pins', JSON.stringify(savedPins));
+
+        // アイコンも色に合わせて更新
+        marker.setIcon(createIcon(data.color));
+        marker.setPopupContent(createPopupForm(marker, latlng, data));
+        marker.openPopup();
+      };
+
+      cancelBtn.onclick = () => {
+        map.removeLayer(marker);
+        marker.closePopup();
+      };
+
+      container.appendChild(textarea);
+      container.appendChild(urlInput);
+      container.appendChild(imageInput);
+      container.appendChild(colorSelect); // 色選択追加
+      container.appendChild(saveBtn);
+      container.appendChild(cancelBtn);
+    }
+
+    return container;
+  }
+
+  function setupMarker(marker, latlng, data) {
+    marker.bindPopup(createPopupForm(marker, latlng, data));
+
+    marker.on('popupopen', () => popupOpen = true);
+    marker.on('popupclose', () => popupOpen = false);
+
+    markers.push(marker);
+  }
+
+  map.on('click', e => {
+    if(popupOpen) return;
+
+    const marker = L.marker(e.latlng, {icon:createIcon()}).addTo(map);
+    setupMarker(marker, e.latlng);
+    marker.openPopup();
+  });
+
+  loadPins(savedPins);
+
+</script>
+<script>
+  if ('serviceWorker' in navigator) {
+    window.addEventListener('load', function () {
+      navigator.serviceWorker.register('/service-worker.js').then(function (registration) {
+        console.log('ServiceWorker registration successful with scope: ', registration.scope);
+      }, function (err) {
+        console.log('ServiceWorker registration failed: ', err);
+      });
+    });
+  }
+</script>
+</body>
+</html>
