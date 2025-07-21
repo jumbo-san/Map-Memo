@@ -1,35 +1,21 @@
 <!DOCTYPE html>
 <html lang="ja">
 <head>
-<link rel="manifest" href="manifest.json">
 <meta charset="UTF-8" />
 <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no" />
-<title>マップ共有（パスキー対応/Firebase）</title>
+<title>マップ共有（Firebase Realtime DB）</title>
 <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" />
 <style>
   body, html { margin:0; padding:0; height:100%; }
   #map { height: 100vh; }
-  .popup-content img { max-width: 100%; margin-top: 8px; }
-  textarea, input[type=text], select {
-    width: 100%; margin: 5px 0; box-sizing: border-box;
-    font-size: 16px; padding: 8px;
-  }
-  button {
-    margin: 3px; font-size: 16px; padding: 10px 15px;
-  }
   #share-container {
     position: absolute; top: 10px; right: 10px; z-index: 1000;
     background: white; padding: 8px; border-radius: 6px; box-shadow: 0 0 5px rgba(0,0,0,0.3);
     font-family: sans-serif;
   }
-  #passkey-input {
-    width: 130px;
-    margin-top: 5px;
-    padding: 8px;
-    font-size: 16px;
-  }
+  #passkey-input { width: 130px; margin-top: 5px; padding: 8px; font-size: 16px; }
 </style>
-<!-- Firebase SDKs -->
+<!-- Firebase (Realtime Database) -->
 <script src="https://www.gstatic.com/firebasejs/10.12.2/firebase-app-compat.js"></script>
 <script src="https://www.gstatic.com/firebasejs/10.12.2/firebase-database-compat.js"></script>
 <script>
@@ -40,12 +26,9 @@
     projectId: "mapapp-abd4d",
     storageBucket: "mapapp-abd4d.appspot.com",
     messagingSenderId: "42925122268",
-    appId: "1:42925122268:web:80c18bcaeb3adf762e4a19",
+    appId: "1:42925122268:web:80c18bcaeb3adf762e4a19"
   };
-
-  // Firebase 初期化
   firebase.initializeApp(firebaseConfig);
-  const db = firebase.database();
 </script>
 </head>
 <body>
@@ -61,6 +44,7 @@
 
 <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
 <script>
+// パスキー生成
 function randomPasskey(len = 8) {
   const chars = 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789';
   let key = '';
@@ -100,7 +84,7 @@ function createIcon(color = 'blue') {
 function loadPins(pins) {
   markers.forEach(m => map.removeLayer(m));
   markers.length = 0;
-  savedPins = pins;
+  savedPins = pins || [];
   savedPins.forEach(item => {
     const marker = L.marker(item.latlng, {icon: createIcon(item.data.color || 'blue')}).addTo(map);
     setupMarker(marker, item.latlng, item.data);
@@ -381,17 +365,6 @@ function saveAndSharePins() {
 
 loadPins(savedPins);
 
-</script>
-<script>
-  if ('serviceWorker' in navigator) {
-    window.addEventListener('load', function () {
-      navigator.serviceWorker.register('/service-worker.js').then(function (registration) {
-        console.log('ServiceWorker registration successful with scope: ', registration.scope);
-      }, function (err) {
-        console.log('ServiceWorker registration failed: ', err);
-      });
-    });
-  }
 </script>
 </body>
 </html>
