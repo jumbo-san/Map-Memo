@@ -1,11 +1,10 @@
 <!DOCTYPE html>
 <html lang="ja">
 <head>
-<head>
-    <link rel="manifest" href="manifest.json">
+<link rel="manifest" href="manifest.json">
 <meta charset="UTF-8" />
 <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no" />
-<title>共有可能なメモ付きマップ（色付きピン対応）</title>
+<title>マップ共有（パスキー対応/Firebase）</title>
 <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" />
 <style>
   body, html { margin:0; padding:0; height:100%; }
@@ -23,259 +22,364 @@
     background: white; padding: 8px; border-radius: 6px; box-shadow: 0 0 5px rgba(0,0,0,0.3);
     font-family: sans-serif;
   }
-  #share-code-input {
+  #passkey-input {
     width: 130px;
     margin-top: 5px;
     padding: 8px;
     font-size: 16px;
   }
 </style>
+<!-- Firebase SDKs -->
+<script src="https://www.gstatic.com/firebasejs/10.12.2/firebase-app-compat.js"></script>
+<script src="https://www.gstatic.com/firebasejs/10.12.2/firebase-database-compat.js"></script>
+<script>
+  const firebaseConfig = {
+    apiKey: "AIzaSyDzq6kKj6jhNy3V7fyhfny-6Lc3BoewB30",
+    authDomain: "mapapp-abd4d.firebaseapp.com",
+    databaseURL: "https://mapapp-abd4d-default-rtdb.asia-southeast1.firebasedatabase.app",
+    projectId: "mapapp-abd4d",
+    storageBucket: "mapapp-abd4d.appspot.com",
+    messagingSenderId: "42925122268",
+    appId: "1:42925122268:web:80c18bcaeb3adf762e4a19",
+  };
+
+  // Firebase 初期化
+  firebase.initializeApp(firebaseConfig);
+  const db = firebase.database();
+</script>
 </head>
 <body>
 
 <div id="map"></div>
-
 <div id="share-container">
-  <button id="share-btn">共有</button><br/>
-  <div id="share-code-display" style="margin-top:5px;"></div>
-  <input type="text" id="share-code-input" placeholder="共有コード入力" />
-  <button id="load-share-btn">読み込み</button>
-  <div id="share-message" style="color:red; margin-top:5px;"></div>
+  <button id="generate-passkey-btn">パスキー生成</button><br/>
+  <div id="passkey-display" style="margin-top:5px;"></div>
+  <input type="text" id="passkey-input" placeholder="パスキー入力" />
+  <button id="load-passkey-btn">読み込み</button>
+  <div id="passkey-message" style="color:red; margin-top:5px;"></div>
 </div>
 
 <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
 <script>
-  const map = L.map('map').setView([35.681236,139.767125], 13);
-  L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png',{
-    attribution: '&copy; OpenStreetMap contributors'
-  }).addTo(map);
+function randomPasskey(len = 8) {
+  const chars = 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789';
+  let key = '';
+  for(let i = 0; i < len; i++) key += chars[Math.floor(Math.random() * chars.length)];
+  return key;
+}
 
-  let savedPins = JSON.parse(localStorage.getItem('pins') || '[]');
-  const markers = [];
-  let popupOpen = false;
+const map = L.map('map').setView([35.681236,139.767125], 13);
+L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png',{
+  attribution: '&copy; OpenStreetMap contributors'
+}).addTo(map);
 
-  // ピン色別アイコン定義
-  const iconUrls = {
-    red: 'https://raw.githubusercontent.com/pointhi/leaflet-color-markers/master/img/marker-icon-red.png',
-    blue: 'https://raw.githubusercontent.com/pointhi/leaflet-color-markers/master/img/marker-icon-blue.png',
-    green: 'https://raw.githubusercontent.com/pointhi/leaflet-color-markers/master/img/marker-icon-green.png',
-    yellow: 'https://raw.githubusercontent.com/pointhi/leaflet-color-markers/master/img/marker-icon-yellow.png',
-    purple: 'https://raw.githubusercontent.com/pointhi/leaflet-color-markers/master/img/marker-icon-violet.png'
-  };
+let savedPins = JSON.parse(localStorage.getItem('pins') || '[]');
+const markers = [];
+let popupOpen = false;
 
-  function createIcon(color = 'blue') {
-    return new L.Icon({
-      iconUrl: iconUrls[color] || iconUrls.blue,
-      shadowUrl: 'https://unpkg.com/leaflet@1.9.4/dist/images/marker-shadow.png',
-      iconSize: [25, 41],
-      iconAnchor: [12, 41],
-      popupAnchor: [1, -34],
-      shadowSize: [41, 41]
+// ピン色別アイコン定義
+const iconUrls = {
+  red: 'https://raw.githubusercontent.com/pointhi/leaflet-color-markers/master/img/marker-icon-red.png',
+  blue: 'https://raw.githubusercontent.com/pointhi/leaflet-color-markers/master/img/marker-icon-blue.png',
+  green: 'https://raw.githubusercontent.com/pointhi/leaflet-color-markers/master/img/marker-icon-green.png',
+  yellow: 'https://raw.githubusercontent.com/pointhi/leaflet-color-markers/master/img/marker-icon-yellow.png',
+  purple: 'https://raw.githubusercontent.com/pointhi/leaflet-color-markers/master/img/marker-icon-violet.png'
+};
+
+function createIcon(color = 'blue') {
+  return new L.Icon({
+    iconUrl: iconUrls[color] || iconUrls.blue,
+    shadowUrl: 'https://unpkg.com/leaflet@1.9.4/dist/images/marker-shadow.png',
+    iconSize: [25, 41],
+    iconAnchor: [12, 41],
+    popupAnchor: [1, -34],
+    shadowSize: [41, 41]
+  });
+}
+
+function loadPins(pins) {
+  markers.forEach(m => map.removeLayer(m));
+  markers.length = 0;
+  savedPins = pins;
+  savedPins.forEach(item => {
+    const marker = L.marker(item.latlng, {icon: createIcon(item.data.color || 'blue')}).addTo(map);
+    setupMarker(marker, item.latlng, item.data);
+  });
+}
+
+function createPopupForm(marker, latlng, existingData=null) {
+  const container = document.createElement('div');
+  container.classList.add('popup-content');
+
+  if(existingData) {
+    // 表示モード
+    const info = document.createElement('div');
+    info.innerHTML =
+      `<p><strong>メモ:</strong> ${existingData.text || ''}</p>`
+      + (existingData.url ? `<p><strong>URL:</strong> <a href="${existingData.url}" target="_blank">${existingData.url}</a></p>` : '')
+      + (existingData.image ? `<img src="${existingData.image}" alt="画像" />` : '')
+      + `<p><strong>色:</strong> ${existingData.color || '青'}</p>`
+    ;
+    container.appendChild(info);
+
+    const closeBtn = document.createElement('button');
+    closeBtn.textContent = '閉じる';
+    closeBtn.onclick = () => map.closePopup();
+
+    const deleteBtn = document.createElement('button');
+    deleteBtn.textContent = '削除';
+    deleteBtn.onclick = () => {
+      map.removeLayer(marker);
+      const idx = markers.findIndex(m => m === marker);
+      if(idx !== -1) {
+        savedPins.splice(idx,1);
+        localStorage.setItem('pins', JSON.stringify(savedPins));
+        saveAndSharePins();
+        markers.splice(idx,1);
+      }
+    };
+
+    const editBtn = document.createElement('button');
+    editBtn.textContent = '編集';
+    editBtn.onclick = () => {
+      marker.bindPopup(createPopupForm(marker, latlng)).openPopup();
+    };
+
+    container.appendChild(closeBtn);
+    container.appendChild(deleteBtn);
+    container.appendChild(editBtn);
+
+  } else {
+    // 入力フォームモード
+    const textarea = document.createElement('textarea');
+    textarea.placeholder = 'メモを入力';
+
+    const urlInput = document.createElement('input');
+    urlInput.type = 'text';
+    urlInput.placeholder = 'URL (任意)';
+
+    const imageInput = document.createElement('input');
+    imageInput.type = 'file';
+    imageInput.accept = 'image/*';
+
+    // 色選択セレクト
+    const colorSelect = document.createElement('select');
+    const colors = [
+      {value:'red', label:'赤'},
+      {value:'blue', label:'青'},
+      {value:'green', label:'緑'},
+      {value:'yellow', label:'黄'},
+      {value:'purple', label:'紫'}
+    ];
+    colors.forEach(c => {
+      const opt = document.createElement('option');
+      opt.value = c.value;
+      opt.textContent = c.label;
+      colorSelect.appendChild(opt);
+    });
+
+    colorSelect.value = existingData?.color || 'blue';
+
+    let imageData = '';
+
+    imageInput.addEventListener('change', () => {
+      const file = imageInput.files[0];
+      if(file) {
+        const reader = new FileReader();
+        reader.onload = () => {
+          imageData = reader.result;
+        };
+        reader.readAsDataURL(file);
+      }
+    });
+
+    const saveBtn = document.createElement('button');
+    saveBtn.textContent = '保存';
+
+    const cancelBtn = document.createElement('button');
+    cancelBtn.textContent = 'キャンセル';
+
+    saveBtn.onclick = () => {
+      const data = {
+        text: textarea.value,
+        url: urlInput.value,
+        image: imageData,
+        color: colorSelect.value
+      };
+      const idx = savedPins.findIndex(pin => pin.latlng.lat === latlng.lat && pin.latlng.lng === latlng.lng);
+      if(idx !== -1) {
+        savedPins[idx].data = data;
+      } else {
+        savedPins.push({ latlng, data });
+        markers.push(marker);
+      }
+      localStorage.setItem('pins', JSON.stringify(savedPins));
+      saveAndSharePins();
+      marker.setIcon(createIcon(data.color));
+      marker.setPopupContent(createPopupForm(marker, latlng, data));
+      marker.openPopup();
+    };
+
+    cancelBtn.onclick = () => {
+      if (existingData) {
+        marker.closePopup();
+      } else {
+        map.removeLayer(marker);
+      }
+    };
+
+    container.appendChild(textarea);
+    container.appendChild(urlInput);
+    container.appendChild(imageInput);
+    container.appendChild(colorSelect);
+    container.appendChild(saveBtn);
+    container.appendChild(cancelBtn);
+
+    // popup外クリックで自動キャンセル
+    let popupOpened = false;
+    function onPopupCloseByOutside(e) {
+      const popupEl = document.querySelector('.leaflet-popup');
+      if (!popupEl) return;
+      if (!popupEl.contains(e.target)) {
+        if (existingData) {
+          marker.closePopup();
+        } else {
+          map.removeLayer(marker);
+        }
+      }
+    }
+    marker.on('popupopen', () => {
+      setTimeout(() => {
+        if (!popupOpened) {
+          document.addEventListener('mousedown', onPopupCloseByOutside);
+          document.addEventListener('touchstart', onPopupCloseByOutside);
+          popupOpened = true;
+        }
+      }, 0);
+    });
+    marker.on('popupclose', () => {
+      document.removeEventListener('mousedown', onPopupCloseByOutside);
+      document.removeEventListener('touchstart', onPopupCloseByOutside);
+      popupOpened = false;
     });
   }
 
-  // 共有コード周りは省略（先ほどのコードを流用）
-  const shareBtn = document.getElementById('share-btn');
-  const shareCodeDisplay = document.getElementById('share-code-display');
-  const shareCodeInput = document.getElementById('share-code-input');
-  const loadShareBtn = document.getElementById('load-share-btn');
-  const shareMessage = document.getElementById('share-message');
+  return container;
+}
 
-  function generateShareCode() {
-    const jsonStr = JSON.stringify(savedPins);
-    const base64 = btoa(unescape(encodeURIComponent(jsonStr)));
-    let sum = 0;
-    for(let i=0; i<base64.length; i++) {
-      sum += base64.charCodeAt(i);
-    }
-    let code = (sum % 10000000).toString().padStart(7,'0');
-    return code;
+function setupMarker(marker, latlng, data) {
+  marker.bindPopup(createPopupForm(marker, latlng, data));
+  marker.on('popupopen', () => popupOpen = true);
+  marker.on('popupclose', () => popupOpen = false);
+  markers.push(marker);
+}
+
+// PC: ダブルクリックでピンを立てる
+map.on('dblclick', e => {
+  if (popupOpen) return;
+  const marker = L.marker(e.latlng, {icon: createIcon()}).addTo(map);
+  setupMarker(marker, e.latlng);
+  marker.openPopup();
+});
+
+// スマートフォン: 2秒長押しでピンを立てる
+let touchTimeout = null;
+let touchLatLng = null;
+
+map.on('touchstart', function (e) {
+  if (e.originalEvent.touches.length !== 1) return;
+
+  touchLatLng = e.latlng;
+  touchTimeout = setTimeout(() => {
+    if (popupOpen) return;
+    const marker = L.marker(touchLatLng, {icon: createIcon()}).addTo(map);
+    setupMarker(marker, touchLatLng);
+    marker.openPopup();
+    touchTimeout = null;
+  }, 2000);
+});
+
+map.on('touchend', function () {
+  if (touchTimeout) {
+    clearTimeout(touchTimeout);
+    touchTimeout = null;
   }
+});
 
-  function loadSharedMapByCode(code) {
-    if (code === generateShareCode()) {
-      loadPins(savedPins);
-      shareMessage.style.color = 'green';
-      shareMessage.textContent = '共有マップを読み込みました。';
-    } else {
-      shareMessage.style.color = 'red';
-      shareMessage.textContent = '共有コードが正しくありません。';
-    }
+// Firebase 共有処理
+function savePinsToFirebase(passkey, pins) {
+  firebase.database().ref('mapshare/' + passkey).set(pins);
+}
+function loadPinsFromFirebase(passkey, callback) {
+  firebase.database().ref('mapshare/' + passkey).once('value', snap => {
+    callback(snap.val() || []);
+  });
+}
+function watchPinsFromFirebase(passkey, callback) {
+  firebase.database().ref('mapshare/' + passkey).on('value', snap => {
+    callback(snap.val() || []);
+  });
+}
+
+// パスキー操作UI
+const generatePasskeyBtn = document.getElementById('generate-passkey-btn');
+const passkeyDisplay = document.getElementById('passkey-display');
+const passkeyInput = document.getElementById('passkey-input');
+const loadPasskeyBtn = document.getElementById('load-passkey-btn');
+const passkeyMessage = document.getElementById('passkey-message');
+
+let currentPasskey = null;
+
+// パスキー生成：現在のマップをオンライン保存＆リアルタイム監視
+generatePasskeyBtn.onclick = () => {
+  const passkey = randomPasskey();
+  savePinsToFirebase(passkey, savedPins);
+  passkeyDisplay.textContent = `パスキー: ${passkey}`;
+  passkeyMessage.style.color = "green";
+  passkeyMessage.textContent = "このパスキーを他端末で入力してください";
+  currentPasskey = passkey;
+  watchPinsFromFirebase(passkey, pins => {
+    localStorage.setItem('pins', JSON.stringify(pins));
+    loadPins(pins);
+  });
+};
+
+// パスキーでマップ取得＆リアルタイム監視
+loadPasskeyBtn.onclick = () => {
+  const passkey = passkeyInput.value.trim();
+  if (!/^[A-Z2-9]{8}$/.test(passkey)) {
+    passkeyMessage.style.color = "red";
+    passkeyMessage.textContent = "8文字の英数字（大文字/2-9）パスキーを入力してください";
+    return;
   }
-
-  shareBtn.onclick = () => {
-    const code = generateShareCode();
-    shareCodeDisplay.textContent = `共有コード: ${code}`;
-    shareMessage.textContent = '';
-  };
-
-  loadShareBtn.onclick = () => {
-    const code = shareCodeInput.value.trim();
-    if(code.length !==7 || !/^\d{7}$/.test(code)) {
-      shareMessage.style.color = 'red';
-      shareMessage.textContent = '7桁の数字コードを入力してください。';
+  loadPinsFromFirebase(passkey, pins => {
+    if (!pins || pins.length === 0) {
+      passkeyMessage.style.color = "red";
+      passkeyMessage.textContent = "データが見つかりません";
       return;
     }
-    loadSharedMapByCode(code);
-  };
-
-  function loadPins(pins) {
-    markers.forEach(m => map.removeLayer(m));
-    markers.length = 0;
-    savedPins = pins;
-    savedPins.forEach(item => {
-      const marker = L.marker(item.latlng, {icon: createIcon(item.data.color || 'blue')}).addTo(map);
-      setupMarker(marker, item.latlng, item.data);
+    passkeyMessage.style.color = "green";
+    passkeyMessage.textContent = "共有マップを読み込みました";
+    passkeyDisplay.textContent = `パスキー: ${passkey}`;
+    currentPasskey = passkey;
+    localStorage.setItem('pins', JSON.stringify(pins));
+    loadPins(pins);
+    watchPinsFromFirebase(passkey, pins => {
+      localStorage.setItem('pins', JSON.stringify(pins));
+      loadPins(pins);
     });
-  }
-
-  function createPopupForm(marker, latlng, existingData=null) {
-    const container = document.createElement('div');
-    container.classList.add('popup-content');
-
-    if(existingData) {
-      // 表示モード
-      const info = document.createElement('div');
-      info.innerHTML = `
-        <p><strong>メモ:</strong> ${existingData.text || ''}</p>
-        ${existingData.url ? `<p><strong>URL:</strong> <a href="${existingData.url}" target="_blank">${existingData.url}</a></p>` : ''}
-        ${existingData.image ? `<img src="${existingData.image}" alt="画像" />` : ''}
-        <p><strong>色:</strong> ${existingData.color || '青'}</p>
-      `;
-      container.appendChild(info);
-
-      const closeBtn = document.createElement('button');
-      closeBtn.textContent = '閉じる';
-      closeBtn.onclick = () => map.closePopup();
-
-      const deleteBtn = document.createElement('button');
-      deleteBtn.textContent = '削除';
-      deleteBtn.onclick = () => {
-        map.removeLayer(marker);
-        const idx = markers.findIndex(m => m === marker);
-        if(idx !== -1) {
-          savedPins.splice(idx,1);
-          localStorage.setItem('pins', JSON.stringify(savedPins));
-          markers.splice(idx,1);
-        }
-      };
-
-      const editBtn = document.createElement('button');
-      editBtn.textContent = '編集';
-      editBtn.onclick = () => {
-        marker.bindPopup(createPopupForm(marker, latlng)).openPopup();
-      };
-
-      container.appendChild(closeBtn);
-      container.appendChild(deleteBtn);
-      container.appendChild(editBtn);
-
-    } else {
-      // 入力フォームモード
-      const textarea = document.createElement('textarea');
-      textarea.placeholder = 'メモを入力';
-
-      const urlInput = document.createElement('input');
-      urlInput.type = 'text';
-      urlInput.placeholder = 'URL (任意)';
-
-      const imageInput = document.createElement('input');
-      imageInput.type = 'file';
-      imageInput.accept = 'image/*';
-
-      // 追加：色選択セレクト
-      const colorSelect = document.createElement('select');
-      const colors = [
-        {value:'red', label:'赤'},
-        {value:'blue', label:'青'},
-        {value:'green', label:'緑'},
-        {value:'yellow', label:'黄'},
-        {value:'purple', label:'紫'}
-      ];
-      colors.forEach(c => {
-        const opt = document.createElement('option');
-        opt.value = c.value;
-        opt.textContent = c.label;
-        colorSelect.appendChild(opt);
-      });
-
-      // デフォルト色設定（青）
-      colorSelect.value = existingData?.color || 'blue';
-
-      let imageData = '';
-
-      imageInput.addEventListener('change', () => {
-        const file = imageInput.files[0];
-        if(file) {
-          const reader = new FileReader();
-          reader.onload = () => {
-            imageData = reader.result;
-          };
-          reader.readAsDataURL(file);
-        }
-      });
-
-      const saveBtn = document.createElement('button');
-      saveBtn.textContent = '保存';
-
-      const cancelBtn = document.createElement('button');
-      cancelBtn.textContent = 'キャンセル';
-
-      saveBtn.onclick = () => {
-        const data = {
-          text: textarea.value,
-          url: urlInput.value,
-          image: imageData,
-          color: colorSelect.value // 色も保存
-        };
-        const idx = savedPins.findIndex(pin => pin.latlng.lat === latlng.lat && pin.latlng.lng === latlng.lng);
-        if(idx !== -1) {
-          savedPins[idx].data = data;
-        } else {
-          savedPins.push({ latlng, data });
-        }
-        localStorage.setItem('pins', JSON.stringify(savedPins));
-
-        // アイコンも色に合わせて更新
-        marker.setIcon(createIcon(data.color));
-        marker.setPopupContent(createPopupForm(marker, latlng, data));
-        marker.openPopup();
-      };
-
-      cancelBtn.onclick = () => {
-        map.removeLayer(marker);
-        marker.closePopup();
-      };
-
-      container.appendChild(textarea);
-      container.appendChild(urlInput);
-      container.appendChild(imageInput);
-      container.appendChild(colorSelect); // 色選択追加
-      container.appendChild(saveBtn);
-      container.appendChild(cancelBtn);
-    }
-
-    return container;
-  }
-
-  function setupMarker(marker, latlng, data) {
-    marker.bindPopup(createPopupForm(marker, latlng, data));
-
-    marker.on('popupopen', () => popupOpen = true);
-    marker.on('popupclose', () => popupOpen = false);
-
-    markers.push(marker);
-  }
-
-  map.on('click', e => {
-    if(popupOpen) return;
-
-    const marker = L.marker(e.latlng, {icon:createIcon()}).addTo(map);
-    setupMarker(marker, e.latlng);
-    marker.openPopup();
   });
+};
 
-  loadPins(savedPins);
+// ピン保存・削除時はsaveAndSharePins()を呼ぶ
+function saveAndSharePins() {
+  localStorage.setItem('pins', JSON.stringify(savedPins));
+  if (currentPasskey) {
+    savePinsToFirebase(currentPasskey, savedPins);
+  }
+}
+
+loadPins(savedPins);
 
 </script>
 <script>
